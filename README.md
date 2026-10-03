@@ -6,8 +6,9 @@ choosing the upscaler and frame generator. Rust + wgpu + egui. Windows first.
 ## What it does
 
 1. **Captures** a window (Windows Graphics Capture).
-2. **Upscales** it with a spatial kernel: nearest, bilinear, Catmull-Rom, Lanczos 2/3, or a
-   built-in edge-adaptive kernel, plus contrast-adaptive sharpening.
+2. **Upscales** it with a spatial kernel: nearest, bilinear, Catmull-Rom, Lanczos 2/3, a
+   built-in edge-adaptive kernel, or **AMD FSR 1** (EASU + RCAS, a port of AMD's MIT-licensed
+   shaders), plus contrast-adaptive sharpening.
 3. **Generates frames** (2x to 8x) with block-matching optical flow on a luma pyramid, or a
    plain-blend baseline. Regions you mark as HUD are excluded from warping, and blocks the
    matcher isn't confident about fade back to a blend.
@@ -60,7 +61,14 @@ works off Windows.
 - `crates/gs-core` - settings, backend catalog, pacing, WGSL shaders, GPU pipeline. No windowing.
 - `crates/gs-app` - egui settings panel, capture sources, overlay and render loop.
 
-## Licensing note
+## Licensing
 
-All shaders are original implementations of published techniques. No AMD, NVIDIA or Lossless
-Scaling code or binaries are included or redistributed.
+- `fsr1_easu.wgsl` / `fsr1_rcas.wgsl` are WGSL ports of AMD FidelityFX Super Resolution 1
+  (MIT, (c) 2021 Advanced Micro Devices, Inc.). The licence notice is kept in each file.
+- The other shaders (Lanczos/bicubic, edge-adaptive, CAS-style sharpen, optical flow,
+  interpolation) are original implementations of published techniques.
+- NVIDIA Image Scaling is MIT-licensed and a port is planned, not done.
+- Not included, and not going to be: DLSS (proprietary, RTX-only), FSR 4 weights or leaked
+  FSR 4 binaries (not open source), Lossless Scaling's LSFG (proprietary).
+- Being open source does not make something usable here: FSR 2/3 are MIT but need the game's
+  motion vectors and depth, so they can't run on captured frames.
