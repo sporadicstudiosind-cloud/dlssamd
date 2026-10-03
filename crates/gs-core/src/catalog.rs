@@ -89,7 +89,7 @@ pub const BACKENDS: &[Backend] = &[
     // ---- Injection lane: need engine data; not implemented ----------------------------------
     b!("nvidia.dlss_sr", "DLSS Super Resolution", "NVIDIA", Upscaler, Injection, NeedsUserFiles, GpuReq::NvidiaRtx, "Needs the game's motion vectors + depth, so it cannot run on captured frames. RTX only. NVIDIA's DLL is not redistributable here."),
     b!("nvidia.dlss_fg", "DLSS Frame Generation", "NVIDIA", FrameGen, Injection, NeedsUserFiles, GpuReq::NvidiaRtx, "Same constraints as DLSS SR; RTX 40+ for FG."),
-    b!("amd.fsr1", "FSR 1 (spatial)", "AMD", Upscaler, Capture, Planned, GpuReq::Any, "Spatial and MIT-licensed; a faithful port is a candidate for the capture lane. Today, use Edge-adaptive."),
+    b!("amd.fsr1", "FSR 1 (EASU + RCAS)", "AMD", Upscaler, Capture, Builtin, GpuReq::Any, "Port of AMD FidelityFX FSR 1 (MIT). EASU upscale plus RCAS sharpen, which replaces the CAS slider for this upscaler."),
     b!("amd.fsr2", "FSR 2 (temporal)", "AMD", Upscaler, Injection, Planned, GpuReq::Any, "Needs game motion vectors; injection lane."),
     b!("amd.fsr3", "FSR 3 / FSR 3.1", "AMD", Upscaler, Injection, Planned, GpuReq::Any, "Temporal upscale + frame generation via game integration."),
     b!("amd.fsr4", "FSR 4 / 4.1 (INT8 / FP8)", "AMD", Upscaler, Injection, NeedsUserFiles, GpuReq::AnyFasterOn("RDNA 4 (FP8)"), "AMD reportedly ships an official INT8 path for RDNA 3. Needs the game's inputs; injection lane with user-supplied DLL."),
@@ -119,6 +119,7 @@ pub fn upscaler_for_id(id: &str) -> Option<crate::config::UpscalerKind> {
         "builtin.lanczos2" => Lanczos2,
         "builtin.lanczos3" => Lanczos3,
         "builtin.edge_adaptive" => EdgeAdaptive,
+        "amd.fsr1" => Fsr1,
         _ => return None,
     })
 }

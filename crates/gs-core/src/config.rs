@@ -14,16 +14,19 @@ pub enum UpscalerKind {
     Lanczos3,
     /// Direction-aware kernel (original implementation, FSR1-style idea).
     EdgeAdaptive,
+    /// AMD FidelityFX Super Resolution 1 (EASU upscale + RCAS sharpen), MIT-licensed port.
+    Fsr1,
 }
 
 impl UpscalerKind {
-    pub const ALL: [UpscalerKind; 6] = [
+    pub const ALL: [UpscalerKind; 7] = [
         Self::Nearest,
         Self::Bilinear,
         Self::CatmullRom,
         Self::Lanczos2,
         Self::Lanczos3,
         Self::EdgeAdaptive,
+        Self::Fsr1,
     ];
     /// Value passed to the shader's `mode` uniform.
     pub fn shader_mode(self) -> u32 {
@@ -34,6 +37,7 @@ impl UpscalerKind {
             Self::Lanczos2 => 3,
             Self::Lanczos3 => 4,
             Self::EdgeAdaptive => 5,
+            Self::Fsr1 => 6,
         }
     }
     pub fn label(self) -> &'static str {
@@ -44,6 +48,7 @@ impl UpscalerKind {
             Self::Lanczos2 => "Lanczos 2",
             Self::Lanczos3 => "Lanczos 3",
             Self::EdgeAdaptive => "Edge-adaptive (built-in)",
+            Self::Fsr1 => "AMD FSR 1 (EASU + RCAS)",
         }
     }
 }

@@ -1,6 +1,8 @@
 //! WGSL sources, embedded at compile time.
 
 pub const UPSCALE: &str = include_str!("shaders/upscale.wgsl");
+pub const FSR1_EASU: &str = include_str!("shaders/fsr1_easu.wgsl");
+pub const FSR1_RCAS: &str = include_str!("shaders/fsr1_rcas.wgsl");
 pub const SHARPEN: &str = include_str!("shaders/sharpen.wgsl");
 pub const FLOW: &str = include_str!("shaders/flow.wgsl");
 pub const LUMA: &str = include_str!("shaders/luma.wgsl");
@@ -26,6 +28,14 @@ mod tests {
     #[test]
     fn upscale_valid() {
         validate("upscale", UPSCALE);
+    }
+    #[test]
+    fn fsr1_easu_valid() {
+        validate("fsr1_easu", FSR1_EASU);
+    }
+    #[test]
+    fn fsr1_rcas_valid() {
+        validate("fsr1_rcas", FSR1_RCAS);
     }
     #[test]
     fn sharpen_valid() {

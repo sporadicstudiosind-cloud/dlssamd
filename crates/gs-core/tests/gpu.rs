@@ -353,3 +353,141 @@ fn debug_flow_vectors() {
         eprintln!("{line}");
     }
 }
+
+fn upscale_with(
+    kind: UpscalerKind,
+    sharp: f32,
+    w: u32,
+    h: u32,
+    scale: f32,
+    f: impl Fn(u32, u32) -> [f32; 3],
+) -> (u32, u32, Vec<f32>) {
+    let (dev, q) = device().unwrap();
+    let mut p = profile();
+    p.upscale.kind = kind;
+    p.upscale.scale = scale;
+    p.upscale.sharpness = sharp;
+    p.framegen.kind = FrameGenKind::Off;
+    let mut pipe = Pipeline::new(dev.clone(), q.clone());
+    pipe.configure(&p, (w, h));
+    let input = upload(&dev, &q, w, h, f);
+    let outs = pipe.process(&input);
+    read(&dev, &q, &outs[0])
+}
+
+#[test]
+fn fsr1_reproduces_a_linear_ramp() {
+    if device().is_none() {
+        return eprintln!("no GPU adapter; skipping");
+    }
+    let (w, h, px) = upscale_with(UpscalerKind::Fsr1, 0.0, 32, 16, 2.0, |x, _| {
+        [x as f32 / 31.0 * 0.8 + 0.1; 3]
+    });
+    // Interior output pixels should land on the ramp: value = 0.1 + 0.8 * src_x / 31, src_x = (x+.5)/2-.5
+    let mut worst = 0.0f32;
+    for x in 8..w - 8 {
+        let src_x = (x as f32 + 0.5) / 2.0 - 0.5;
+        let want = 0.1 + 0.8 * src_x / 31.0;
+        let got = px[((h / 2 * w + x) * 3) as usize];
+        worst = worst.max((got - want).abs());
+    }
+    assert!(worst < 0.012, "ramp error {worst}");
+}
+
+/// 10%-90% rise distance along row `row`, in output pixels, with sub-pixel linear interpolation.
+fn rise_width(px: &[f32], w: u32, row: usize, lo: f32, hi: f32) -> f32 {
+    let at = |x: usize| (px[(row * w as usize + x) * 3] - lo) / (hi - lo);
+    let cross = |level: f32| -> Option<f32> {
+        (1..w as usize)
+            .find(|&x| at(x - 1) < level && at(x) >= level)
+            .map(|x| {
+                let (a, b) = (at(x - 1), at(x));
+                (x - 1) as f32 + (level - a) / (b - a)
+            })
+    };
+    cross(0.9).unwrap() - cross(0.1).unwrap()
+}
+
+#[test]
+fn fsr1_edge_is_sharper_than_bilinear_without_overshoot() {
+    if device().is_none() {
+        return eprintln!("no GPU adapter; skipping");
+    }
+    // Vertical step edge, dark 0.2 | bright 0.8, upscaled 3x.
+    let edge = |x: u32, _| if x < 16 { [0.2; 3] } else { [0.8; 3] };
+    let (w, h, bil) = upscale_with(UpscalerKind::Bilinear, 0.0, 32, 8, 3.0, edge);
+    let (_, _, fsr) = upscale_with(UpscalerKind::Fsr1, 0.0, 32, 8, 3.0, edge);
+    let row = (h / 2) as usize;
+    let (wb, wf) = (
+        rise_width(&bil, w, row, 0.2, 0.8),
+        rise_width(&fsr, w, row, 0.2, 0.8),
+    );
+    eprintln!("10-90% rise: bilinear {wb:.2} px, EASU {wf:.2} px");
+    // Measured 2.19 vs 2.40 px: only slightly sharper, because bilinear is already near-ideal
+    // on a perfectly axis-aligned step. The big win is on diagonals (next test).
+    assert!(
+        wf < wb * 0.97,
+        "EASU rise {wf} px not sharper than bilinear {wb} px"
+    );
+    let (lo, hi) = fsr
+        .iter()
+        .fold((1.0f32, 0.0f32), |(l, h), &v| (l.min(v), h.max(v)));
+    assert!(
+        lo > 0.2 - 0.01 && hi < 0.8 + 0.01,
+        "overshoot: range {lo}..{hi}"
+    );
+}
+
+#[test]
+fn fsr1_keeps_diagonal_edges_cleaner_than_bilinear() {
+    if device().is_none() {
+        return eprintln!("no GPU adapter; skipping");
+    }
+    // 45-degree edge. Measure rise width perpendicular-ish along a row (same for both, so comparable).
+    let diag = |x: u32, y: u32| {
+        if x as i32 - y as i32 > 12 {
+            [0.8; 3]
+        } else {
+            [0.2; 3]
+        }
+    };
+    let (w, h, bil) = upscale_with(UpscalerKind::Bilinear, 0.0, 32, 24, 3.0, diag);
+    let (_, _, fsr) = upscale_with(UpscalerKind::Fsr1, 0.0, 32, 24, 3.0, diag);
+    let row = (h / 2) as usize;
+    let (wb, wf) = (
+        rise_width(&bil, w, row, 0.2, 0.8),
+        rise_width(&fsr, w, row, 0.2, 0.8),
+    );
+    eprintln!("diagonal 10-90% rise: bilinear {wb:.2} px, EASU {wf:.2} px");
+    // Measured 2.17 vs 4.65 px.
+    assert!(
+        wf < wb * 0.6,
+        "EASU diagonal rise {wf} not much sharper than bilinear {wb}"
+    );
+}
+
+#[test]
+fn rcas_adds_local_contrast_and_stays_in_range() {
+    if device().is_none() {
+        return eprintln!("no GPU adapter; skipping");
+    }
+    let soft = |x: u32, _| {
+        let t = ((x as f32 - 14.0) / 4.0).clamp(0.0, 1.0);
+        [0.25 + 0.5 * t; 3]
+    };
+    let (w, h, off) = upscale_with(UpscalerKind::Fsr1, 0.0, 32, 8, 1.5, soft);
+    let (_, _, on) = upscale_with(UpscalerKind::Fsr1, 1.0, 32, 8, 1.5, soft);
+    let grad = |px: &[f32]| -> f32 {
+        let r = (h / 2 * w) as usize;
+        (1..w as usize)
+            .map(|x| (px[(r + x) * 3] - px[(r + x - 1) * 3]).abs())
+            .fold(0.0, f32::max)
+    };
+    assert!(
+        grad(&on) > grad(&off) * 1.05,
+        "RCAS didn't steepen the edge: {} vs {}",
+        grad(&on),
+        grad(&off)
+    );
+    assert!(on.iter().all(|v| (0.0..=1.0).contains(v)));
+}

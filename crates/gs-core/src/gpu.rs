@@ -188,6 +188,8 @@ struct State {
     /// luma[slot][level]
     luma: [Vec<wgpu::Texture>; 2],
     outputs: Vec<wgpu::Texture>,
+    /// True when the FSR 1 EASU/RCAS shaders replace the generic upscaler and CAS.
+    fsr1: bool,
     cur: usize,
     frames_seen: u64,
     upscale_params: wgpu::Buffer,
@@ -203,6 +205,8 @@ pub struct Pipeline {
     queue: wgpu::Queue,
     upscale: Stage,
     sharpen: Stage,
+    easu: Stage,
+    rcas: Stage,
     flow: Stage,
     luma: Stage,
     down: Stage,
@@ -223,6 +227,18 @@ impl Pipeline {
             &device,
             "sharpen",
             crate::shaders::SHARPEN,
+            &[Entry::Uniform, Entry::Tex, Entry::Storage(FORMAT)],
+        );
+        let easu = make_stage(
+            &device,
+            "fsr1_easu",
+            crate::shaders::FSR1_EASU,
+            &[Entry::Uniform, Entry::Tex, Entry::Storage(FORMAT)],
+        );
+        let rcas = make_stage(
+            &device,
+            "fsr1_rcas",
+            crate::shaders::FSR1_RCAS,
             &[Entry::Uniform, Entry::Tex, Entry::Storage(FORMAT)],
         );
         let flow = make_stage(
@@ -274,6 +290,8 @@ impl Pipeline {
             queue,
             upscale,
             sharpen,
+            easu,
+            rcas,
             flow,
             luma,
             down,
@@ -341,7 +359,10 @@ impl Pipeline {
             .map(|i| mk(&format!("out{i}"), out_size, FORMAT))
             .collect();
 
-        let mode = if profile.upscale.enabled && out_size != in_size {
+        let mode = if profile.upscale.enabled
+            && out_size != in_size
+            && profile.upscale.kind != UpscalerKind::Fsr1
+        {
             profile.upscale.kind.shader_mode()
         } else {
             UpscalerKind::Nearest.shader_mode()
@@ -429,6 +450,9 @@ impl Pipeline {
             })
             .collect();
 
+        let fsr1 = profile.upscale.enabled
+            && profile.upscale.kind == UpscalerKind::Fsr1
+            && out_size != in_size;
         self.state = Some(State {
             profile,
             in_size,
@@ -441,6 +465,7 @@ impl Pipeline {
             dummy_flow,
             luma,
             outputs,
+            fsr1,
             cur: 0,
             frames_seen: 0,
             upscale_params,
@@ -522,26 +547,36 @@ impl Pipeline {
         let do_upscale =
             |enc: &mut wgpu::CommandEncoder, from: &wgpu::Texture, to: &wgpu::Texture| {
                 let g = bg(
-                    &self.upscale,
+                    if st.fsr1 { &self.easu } else { &self.upscale },
                     &[
                         st.upscale_params.as_entire_binding(),
                         wgpu::BindingResource::TextureView(&view(from)),
                         wgpu::BindingResource::TextureView(&view(to)),
                     ],
                 );
-                dispatch(enc, &self.upscale, &g, st.out_size);
+                dispatch(
+                    enc,
+                    if st.fsr1 { &self.easu } else { &self.upscale },
+                    &g,
+                    st.out_size,
+                );
             };
         let do_sharpen =
             |enc: &mut wgpu::CommandEncoder, from: &wgpu::Texture, to: &wgpu::Texture| {
                 let g = bg(
-                    &self.sharpen,
+                    if st.fsr1 { &self.rcas } else { &self.sharpen },
                     &[
                         st.sharpen_params.as_entire_binding(),
                         wgpu::BindingResource::TextureView(&view(from)),
                         wgpu::BindingResource::TextureView(&view(to)),
                     ],
                 );
-                dispatch(enc, &self.sharpen, &g, st.out_size);
+                dispatch(
+                    enc,
+                    if st.fsr1 { &self.rcas } else { &self.sharpen },
+                    &g,
+                    st.out_size,
+                );
             };
         let do_copy = |enc: &mut wgpu::CommandEncoder, from: &wgpu::Texture, to: &wgpu::Texture| {
             enc.copy_texture_to_texture(
