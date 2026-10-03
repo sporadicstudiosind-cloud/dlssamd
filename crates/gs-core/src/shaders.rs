@@ -3,6 +3,7 @@
 pub const UPSCALE: &str = include_str!("shaders/upscale.wgsl");
 pub const FSR1_EASU: &str = include_str!("shaders/fsr1_easu.wgsl");
 pub const FSR1_RCAS: &str = include_str!("shaders/fsr1_rcas.wgsl");
+pub const NIS_SCALER: &str = include_str!("shaders/nis_scaler.wgsl");
 pub const SHARPEN: &str = include_str!("shaders/sharpen.wgsl");
 pub const FLOW: &str = include_str!("shaders/flow.wgsl");
 pub const LUMA: &str = include_str!("shaders/luma.wgsl");
@@ -36,6 +37,10 @@ mod tests {
     #[test]
     fn fsr1_rcas_valid() {
         validate("fsr1_rcas", FSR1_RCAS);
+    }
+    #[test]
+    fn nis_scaler_valid() {
+        validate("nis_scaler", NIS_SCALER);
     }
     #[test]
     fn sharpen_valid() {

@@ -4,5 +4,7 @@
 pub mod catalog;
 pub mod config;
 pub mod gpu;
+pub mod nis;
+pub mod nis_coefs;
 pub mod pacing;
 pub mod shaders;

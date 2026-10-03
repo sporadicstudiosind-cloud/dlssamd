@@ -190,6 +190,8 @@ struct State {
     outputs: Vec<wgpu::Texture>,
     /// True when the FSR 1 EASU/RCAS shaders replace the generic upscaler and CAS.
     fsr1: bool,
+    /// NIS buffers (config, scaler coefficients, USM coefficients) when NIS is active.
+    nis: Option<[wgpu::Buffer; 3]>,
     cur: usize,
     frames_seen: u64,
     upscale_params: wgpu::Buffer,
@@ -207,6 +209,7 @@ pub struct Pipeline {
     sharpen: Stage,
     easu: Stage,
     rcas: Stage,
+    nis: Stage,
     flow: Stage,
     luma: Stage,
     down: Stage,
@@ -240,6 +243,18 @@ impl Pipeline {
             "fsr1_rcas",
             crate::shaders::FSR1_RCAS,
             &[Entry::Uniform, Entry::Tex, Entry::Storage(FORMAT)],
+        );
+        let nis = make_stage(
+            &device,
+            "nis_scaler",
+            crate::shaders::NIS_SCALER,
+            &[
+                Entry::Uniform,
+                Entry::Uniform,
+                Entry::Uniform,
+                Entry::Tex,
+                Entry::Storage(FORMAT),
+            ],
         );
         let flow = make_stage(
             &device,
@@ -292,6 +307,7 @@ impl Pipeline {
             sharpen,
             easu,
             rcas,
+            nis,
             flow,
             luma,
             down,
@@ -450,6 +466,28 @@ impl Pipeline {
             })
             .collect();
 
+        let nis = (profile.upscale.enabled
+            && profile.upscale.kind == UpscalerKind::Nis
+            && out_size != in_size)
+            .then(|| crate::nis::scaler_config(profile.upscale.sharpness, in_size, out_size))
+            .flatten()
+            .map(|cfg| {
+                [
+                    ub("nis_cfg", bytemuck::bytes_of(&cfg)),
+                    ub(
+                        "nis_coef_scale",
+                        bytemuck::cast_slice(&crate::nis::packed_coefs(
+                            &crate::nis_coefs::COEF_SCALE,
+                        )),
+                    ),
+                    ub(
+                        "nis_coef_usm",
+                        bytemuck::cast_slice(&crate::nis::packed_coefs(
+                            &crate::nis_coefs::COEF_USM,
+                        )),
+                    ),
+                ]
+            });
         let fsr1 = profile.upscale.enabled
             && profile.upscale.kind == UpscalerKind::Fsr1
             && out_size != in_size;
@@ -466,6 +504,7 @@ impl Pipeline {
             luma,
             outputs,
             fsr1,
+            nis,
             cur: 0,
             frames_seen: 0,
             upscale_params,
@@ -497,7 +536,9 @@ impl Pipeline {
             1
         };
         let after = st.profile.framegen.stage == FrameGenStage::AfterUpscale;
-        let sharpen = st.profile.upscale.enabled && st.profile.upscale.sharpness > 0.001;
+        // FSR 1 swaps in RCAS; NIS sharpens inside its scaler, so it gets no separate pass.
+        let sharpen =
+            st.profile.upscale.enabled && st.profile.upscale.sharpness > 0.001 && st.nis.is_none();
 
         let mut enc = self
             .device
@@ -546,6 +587,20 @@ impl Pipeline {
         // upscale(`from`) -> `to`
         let do_upscale =
             |enc: &mut wgpu::CommandEncoder, from: &wgpu::Texture, to: &wgpu::Texture| {
+                if let Some([cfg, coef_s, coef_u]) = &st.nis {
+                    let g = bg(
+                        &self.nis,
+                        &[
+                            cfg.as_entire_binding(),
+                            coef_s.as_entire_binding(),
+                            coef_u.as_entire_binding(),
+                            wgpu::BindingResource::TextureView(&view(from)),
+                            wgpu::BindingResource::TextureView(&view(to)),
+                        ],
+                    );
+                    dispatch(enc, &self.nis, &g, st.out_size);
+                    return;
+                }
                 let g = bg(
                     if st.fsr1 { &self.easu } else { &self.upscale },
                     &[

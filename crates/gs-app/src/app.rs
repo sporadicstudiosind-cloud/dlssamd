@@ -241,8 +241,18 @@ impl eframe::App for App {
                     if ui.button("Stop").clicked() {
                         self.stop();
                     }
-                } else if ui.button("Start").clicked() {
-                    self.start();
+                } else {
+                    if ui.button("Start").clicked() {
+                        self.start();
+                    }
+                    if ui
+                        .button("Smooth Motion (2x)")
+                        .on_hover_text("One click: fixed 2x frame generation from the frames the app presents, no upscaling, lowest-latency presentation. Clean-room equivalent of the documented behaviour of NVIDIA Smooth Motion, not NVIDIA's code.")
+                        .clicked()
+                    {
+                        self.settings.active = self.settings.ensure_smooth_motion();
+                        self.start();
+                    }
                 }
                 if let Some(e) = &self.start_error {
                     ui.colored_label(egui::Color32::RED, e);
