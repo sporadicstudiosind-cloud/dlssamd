@@ -150,7 +150,11 @@ fn tex(
 ) -> wgpu::Texture {
     device.create_texture(&wgpu::TextureDescriptor {
         label: Some(label),
-        size: wgpu::Extent3d { width: size.0.max(1), height: size.1.max(1), depth_or_array_layers: 1 },
+        size: wgpu::Extent3d {
+            width: size.0.max(1),
+            height: size.1.max(1),
+            depth_or_array_layers: 1,
+        },
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
@@ -225,15 +229,38 @@ impl Pipeline {
             &device,
             "flow",
             crate::shaders::FLOW,
-            &[Entry::Uniform, Entry::TexLoad, Entry::TexLoad, Entry::Tex, Entry::Storage(FLOW_FORMAT)],
+            &[
+                Entry::Uniform,
+                Entry::TexLoad,
+                Entry::TexLoad,
+                Entry::Tex,
+                Entry::Storage(FLOW_FORMAT),
+            ],
         );
-        let luma = make_stage(&device, "luma", crate::shaders::LUMA, &[Entry::Tex, Entry::Storage(LUMA_FORMAT)]);
-        let down = make_stage(&device, "down", crate::shaders::DOWN, &[Entry::TexLoad, Entry::Storage(LUMA_FORMAT)]);
+        let luma = make_stage(
+            &device,
+            "luma",
+            crate::shaders::LUMA,
+            &[Entry::Tex, Entry::Storage(LUMA_FORMAT)],
+        );
+        let down = make_stage(
+            &device,
+            "down",
+            crate::shaders::DOWN,
+            &[Entry::TexLoad, Entry::Storage(LUMA_FORMAT)],
+        );
         let interp = make_stage(
             &device,
             "interpolate",
             crate::shaders::INTERPOLATE,
-            &[Entry::Uniform, Entry::Tex, Entry::Tex, Entry::Tex, Entry::Sampler, Entry::Storage(FORMAT)],
+            &[
+                Entry::Uniform,
+                Entry::Tex,
+                Entry::Tex,
+                Entry::Tex,
+                Entry::Sampler,
+                Entry::Storage(FORMAT),
+            ],
         );
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             address_mode_u: wgpu::AddressMode::ClampToEdge,
@@ -242,7 +269,18 @@ impl Pipeline {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
-        Self { device, queue, upscale, sharpen, flow, luma, down, interp, sampler, state: None }
+        Self {
+            device,
+            queue,
+            upscale,
+            sharpen,
+            flow,
+            luma,
+            down,
+            interp,
+            sampler,
+            state: None,
+        }
     }
 
     pub fn device(&self) -> &wgpu::Device {
@@ -288,12 +326,20 @@ impl Pipeline {
             let (w, h) = level_size(l);
             (w.div_ceil(block), h.div_ceil(block))
         };
-        let flows: Vec<wgpu::Texture> = (0..levels).map(|l| mk(&format!("flow{l}"), level_flow_dims(l), FLOW_FORMAT)).collect();
+        let flows: Vec<wgpu::Texture> = (0..levels)
+            .map(|l| mk(&format!("flow{l}"), level_flow_dims(l), FLOW_FORMAT))
+            .collect();
         let dummy_flow = mk("dummy_flow", (1, 1), FLOW_FORMAT);
-        let luma_tex = |slot: usize| -> Vec<wgpu::Texture> { (0..levels).map(|l| mk(&format!("luma{slot}_{l}"), level_size(l), LUMA_FORMAT)).collect() };
+        let luma_tex = |slot: usize| -> Vec<wgpu::Texture> {
+            (0..levels)
+                .map(|l| mk(&format!("luma{slot}_{l}"), level_size(l), LUMA_FORMAT))
+                .collect()
+        };
         let luma = [luma_tex(0), luma_tex(1)];
         let n = Self::outputs_per_frame(&profile).max(1) as usize;
-        let outputs = (0..n).map(|i| mk(&format!("out{i}"), out_size, FORMAT)).collect();
+        let outputs = (0..n)
+            .map(|i| mk(&format!("out{i}"), out_size, FORMAT))
+            .collect();
 
         let mode = if profile.upscale.enabled && out_size != in_size {
             profile.upscale.kind.shader_mode()
@@ -338,7 +384,11 @@ impl Pipeline {
                         flow_dims: [level_flow_dims(l).0, level_flow_dims(l).1],
                         block,
                         radius,
-                        stride: if l == 0 { profile.framegen.sample_stride } else { 1 },
+                        stride: if l == 0 {
+                            profile.framegen.sample_stride
+                        } else {
+                            1
+                        },
                         has_init: u32::from(!top),
                         total_radius: (total_r >> l).max(1) as f32,
                         _pad: [0.0; 3],
@@ -405,7 +455,10 @@ impl Pipeline {
     ///
     /// Panics if [`configure`](Self::configure) has not been called.
     pub fn process(&mut self, frame: &wgpu::Texture) -> &[wgpu::Texture] {
-        let mut st = self.state.take().expect("Pipeline::configure must be called first");
+        let mut st = self
+            .state
+            .take()
+            .expect("Pipeline::configure must be called first");
         let had_prev = st.frames_seen > 0;
         let prev = st.cur;
         let cur = 1 - st.cur;
@@ -413,15 +466,27 @@ impl Pipeline {
         st.frames_seen += 1;
 
         let fg = st.profile.framegen.kind != FrameGenKind::Off && had_prev;
-        let n = if fg { st.profile.framegen.multiplier as usize } else { 1 };
+        let n = if fg {
+            st.profile.framegen.multiplier as usize
+        } else {
+            1
+        };
         let after = st.profile.framegen.stage == FrameGenStage::AfterUpscale;
         let sharpen = st.profile.upscale.enabled && st.profile.upscale.sharpness > 0.001;
 
-        let mut enc = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("frame") });
+        let mut enc = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("frame"),
+            });
         enc.copy_texture_to_texture(
             frame.as_image_copy(),
             st.src[cur].as_image_copy(),
-            wgpu::Extent3d { width: st.in_size.0, height: st.in_size.1, depth_or_array_layers: 1 },
+            wgpu::Extent3d {
+                width: st.in_size.0,
+                height: st.in_size.1,
+                depth_or_array_layers: 1,
+            },
         );
 
         let view = |t: &wgpu::Texture| t.create_view(&Default::default());
@@ -429,47 +494,91 @@ impl Pipeline {
             let e: Vec<_> = entries
                 .iter()
                 .enumerate()
-                .map(|(i, r)| wgpu::BindGroupEntry { binding: i as u32, resource: r.clone() })
+                .map(|(i, r)| wgpu::BindGroupEntry {
+                    binding: i as u32,
+                    resource: r.clone(),
+                })
                 .collect();
-            self.device.create_bind_group(&wgpu::BindGroupDescriptor { label: None, layout: &stage.layout, entries: &e })
+            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: None,
+                layout: &stage.layout,
+                entries: &e,
+            })
         };
-        let dispatch = |enc: &mut wgpu::CommandEncoder, stage: &Stage, group: &wgpu::BindGroup, size: (u32, u32)| {
-            let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor { label: None, timestamp_writes: None });
+        let dispatch = |enc: &mut wgpu::CommandEncoder,
+                        stage: &Stage,
+                        group: &wgpu::BindGroup,
+                        size: (u32, u32)| {
+            let mut pass = enc.begin_compute_pass(&wgpu::ComputePassDescriptor {
+                label: None,
+                timestamp_writes: None,
+            });
             pass.set_pipeline(&stage.pipeline);
             pass.set_bind_group(0, group, &[]);
             pass.dispatch_workgroups(size.0.div_ceil(8), size.1.div_ceil(8), 1);
         };
 
         // upscale(`from`) -> `to`
-        let do_upscale = |enc: &mut wgpu::CommandEncoder, from: &wgpu::Texture, to: &wgpu::Texture| {
-            let g = bg(
-                &self.upscale,
-                &[st.upscale_params.as_entire_binding(), wgpu::BindingResource::TextureView(&view(from)), wgpu::BindingResource::TextureView(&view(to))],
-            );
-            dispatch(enc, &self.upscale, &g, st.out_size);
-        };
-        let do_sharpen = |enc: &mut wgpu::CommandEncoder, from: &wgpu::Texture, to: &wgpu::Texture| {
-            let g = bg(
-                &self.sharpen,
-                &[st.sharpen_params.as_entire_binding(), wgpu::BindingResource::TextureView(&view(from)), wgpu::BindingResource::TextureView(&view(to))],
-            );
-            dispatch(enc, &self.sharpen, &g, st.out_size);
-        };
+        let do_upscale =
+            |enc: &mut wgpu::CommandEncoder, from: &wgpu::Texture, to: &wgpu::Texture| {
+                let g = bg(
+                    &self.upscale,
+                    &[
+                        st.upscale_params.as_entire_binding(),
+                        wgpu::BindingResource::TextureView(&view(from)),
+                        wgpu::BindingResource::TextureView(&view(to)),
+                    ],
+                );
+                dispatch(enc, &self.upscale, &g, st.out_size);
+            };
+        let do_sharpen =
+            |enc: &mut wgpu::CommandEncoder, from: &wgpu::Texture, to: &wgpu::Texture| {
+                let g = bg(
+                    &self.sharpen,
+                    &[
+                        st.sharpen_params.as_entire_binding(),
+                        wgpu::BindingResource::TextureView(&view(from)),
+                        wgpu::BindingResource::TextureView(&view(to)),
+                    ],
+                );
+                dispatch(enc, &self.sharpen, &g, st.out_size);
+            };
         let do_copy = |enc: &mut wgpu::CommandEncoder, from: &wgpu::Texture, to: &wgpu::Texture| {
             enc.copy_texture_to_texture(
                 from.as_image_copy(),
                 to.as_image_copy(),
-                wgpu::Extent3d { width: st.out_size.0, height: st.out_size.1, depth_or_array_layers: 1 },
+                wgpu::Extent3d {
+                    width: st.out_size.0,
+                    height: st.out_size.1,
+                    depth_or_array_layers: 1,
+                },
             );
         };
 
         // Motion-search pyramid for the new frame (the previous one is kept from last time).
         if st.profile.framegen.kind == FrameGenKind::OpticalFlow {
-            let g = bg(&self.luma, &[wgpu::BindingResource::TextureView(&view(&st.src[cur])), wgpu::BindingResource::TextureView(&view(&st.luma[cur][0]))]);
+            let g = bg(
+                &self.luma,
+                &[
+                    wgpu::BindingResource::TextureView(&view(&st.src[cur])),
+                    wgpu::BindingResource::TextureView(&view(&st.luma[cur][0])),
+                ],
+            );
             dispatch(&mut enc, &self.luma, &g, st.in_size);
             for l in 1..st.luma[cur].len() {
-                let g = bg(&self.down, &[wgpu::BindingResource::TextureView(&view(&st.luma[cur][l - 1])), wgpu::BindingResource::TextureView(&view(&st.luma[cur][l]))]);
-                dispatch(&mut enc, &self.down, &g, (st.luma[cur][l].width(), st.luma[cur][l].height()));
+                let g = bg(
+                    &self.down,
+                    &[
+                        wgpu::BindingResource::TextureView(&view(&st.luma[cur][l - 1])),
+                        wgpu::BindingResource::TextureView(&view(&st.luma[cur][l])),
+                    ],
+                );
+                dispatch(
+                    &mut enc,
+                    &self.down,
+                    &g,
+                    (st.luma[cur][l].width(), st.luma[cur][l].height()),
+                );
             }
         }
 
@@ -477,7 +586,11 @@ impl Pipeline {
             if st.profile.framegen.kind == FrameGenKind::OpticalFlow {
                 let levels = st.flows.len();
                 for l in (0..levels).rev() {
-                    let parent = if l + 1 < levels { &st.flows[l + 1] } else { &st.dummy_flow };
+                    let parent = if l + 1 < levels {
+                        &st.flows[l + 1]
+                    } else {
+                        &st.dummy_flow
+                    };
                     let g = bg(
                         &self.flow,
                         &[
@@ -488,17 +601,30 @@ impl Pipeline {
                             wgpu::BindingResource::TextureView(&view(&st.flows[l])),
                         ],
                     );
-                    dispatch(&mut enc, &self.flow, &g, (st.flows[l].width(), st.flows[l].height()));
+                    dispatch(
+                        &mut enc,
+                        &self.flow,
+                        &g,
+                        (st.flows[l].width(), st.flows[l].height()),
+                    );
                 }
             }
             if after {
                 do_upscale(&mut enc, &st.src[cur], &st.up[cur]);
             }
             for (k, slot) in st.phases.iter().enumerate() {
-                let (a, b, isize) = if after { (&st.up[prev], &st.up[cur], st.out_size) } else { (&st.src[prev], &st.src[cur], st.in_size) };
+                let (a, b, isize) = if after {
+                    (&st.up[prev], &st.up[cur], st.out_size)
+                } else {
+                    (&st.src[prev], &st.src[cur], st.in_size)
+                };
                 // Where interpolation lands: straight into the output when nothing follows it.
                 let interp_dst = if after {
-                    if sharpen { &st.scaled } else { &st.outputs[k] }
+                    if sharpen {
+                        &st.scaled
+                    } else {
+                        &st.outputs[k]
+                    }
                 } else {
                     &st.mid
                 };

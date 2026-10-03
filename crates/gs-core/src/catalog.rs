@@ -164,7 +164,13 @@ mod tests {
 
     #[test]
     fn temporal_methods_are_never_capture_lane() {
-        for id in ["nvidia.dlss_sr", "amd.fsr2", "amd.fsr3", "amd.fsr4", "intel.xess"] {
+        for id in [
+            "nvidia.dlss_sr",
+            "amd.fsr2",
+            "amd.fsr3",
+            "amd.fsr4",
+            "intel.xess",
+        ] {
             assert_ne!(by_id(id).unwrap().lane, Lane::Capture, "{id}");
         }
     }

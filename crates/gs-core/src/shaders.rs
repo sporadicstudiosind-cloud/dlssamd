@@ -15,21 +15,36 @@ mod tests {
     fn validate(name: &str, src: &str) {
         let module = naga::front::wgsl::parse_str(src)
             .unwrap_or_else(|e| panic!("{name}: parse error:\n{}", e.emit_to_string(src)));
-        naga::valid::Validator::new(naga::valid::ValidationFlags::all(), naga::valid::Capabilities::all())
-            .validate(&module)
-            .unwrap_or_else(|e| panic!("{name}: validation error: {e:?}"));
+        naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::all(),
+        )
+        .validate(&module)
+        .unwrap_or_else(|e| panic!("{name}: validation error: {e:?}"));
     }
 
     #[test]
-    fn upscale_valid() { validate("upscale", UPSCALE); }
+    fn upscale_valid() {
+        validate("upscale", UPSCALE);
+    }
     #[test]
-    fn sharpen_valid() { validate("sharpen", SHARPEN); }
+    fn sharpen_valid() {
+        validate("sharpen", SHARPEN);
+    }
     #[test]
-    fn flow_valid() { validate("flow", FLOW); }
+    fn flow_valid() {
+        validate("flow", FLOW);
+    }
     #[test]
-    fn luma_valid() { validate("luma", LUMA); }
+    fn luma_valid() {
+        validate("luma", LUMA);
+    }
     #[test]
-    fn down_valid() { validate("down", DOWN); }
+    fn down_valid() {
+        validate("down", DOWN);
+    }
     #[test]
-    fn interpolate_valid() { validate("interpolate", INTERPOLATE); }
+    fn interpolate_valid() {
+        validate("interpolate", INTERPOLATE);
+    }
 }

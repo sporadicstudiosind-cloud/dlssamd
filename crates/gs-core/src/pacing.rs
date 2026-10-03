@@ -11,7 +11,10 @@ pub struct IntervalEstimator {
 
 impl IntervalEstimator {
     pub fn new(alpha: f64) -> Self {
-        Self { ema_us: None, alpha: alpha.clamp(0.01, 1.0) }
+        Self {
+            ema_us: None,
+            alpha: alpha.clamp(0.01, 1.0),
+        }
     }
 
     /// Feed the time since the previous real frame. Outliers (>4x the average, e.g. a

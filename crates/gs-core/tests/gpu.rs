@@ -15,7 +15,13 @@ fn device() -> Option<(wgpu::Device, wgpu::Queue)> {
     pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default())).ok()
 }
 
-fn upload(dev: &wgpu::Device, q: &wgpu::Queue, w: u32, h: u32, f: impl Fn(u32, u32) -> [f32; 3]) -> wgpu::Texture {
+fn upload(
+    dev: &wgpu::Device,
+    q: &wgpu::Queue,
+    w: u32,
+    h: u32,
+    f: impl Fn(u32, u32) -> [f32; 3],
+) -> wgpu::Texture {
     let mut data = Vec::with_capacity((w * h * 4) as usize);
     for y in 0..h {
         for x in 0..w {
@@ -26,19 +32,33 @@ fn upload(dev: &wgpu::Device, q: &wgpu::Queue, w: u32, h: u32, f: impl Fn(u32, u
     }
     let t = dev.create_texture(&wgpu::TextureDescriptor {
         label: None,
-        size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        size: wgpu::Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        },
         mip_level_count: 1,
         sample_count: 1,
         dimension: wgpu::TextureDimension::D2,
         format: FORMAT,
-        usage: wgpu::TextureUsages::COPY_SRC | wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING,
+        usage: wgpu::TextureUsages::COPY_SRC
+            | wgpu::TextureUsages::COPY_DST
+            | wgpu::TextureUsages::TEXTURE_BINDING,
         view_formats: &[],
     });
     q.write_texture(
         t.as_image_copy(),
         &data,
-        wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(w * 4), rows_per_image: Some(h) },
-        wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        wgpu::TexelCopyBufferLayout {
+            offset: 0,
+            bytes_per_row: Some(w * 4),
+            rows_per_image: Some(h),
+        },
+        wgpu::Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        },
     );
     t
 }
@@ -55,8 +75,19 @@ fn read(dev: &wgpu::Device, q: &wgpu::Queue, t: &wgpu::Texture) -> (u32, u32, Ve
     let mut enc = dev.create_command_encoder(&Default::default());
     enc.copy_texture_to_buffer(
         t.as_image_copy(),
-        wgpu::TexelCopyBufferInfo { buffer: &buf, layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(bpr), rows_per_image: Some(h) } },
-        wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &buf,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(bpr),
+                rows_per_image: Some(h),
+            },
+        },
+        wgpu::Extent3d {
+            width: w,
+            height: h,
+            depth_or_array_layers: 1,
+        },
     );
     q.submit([enc.finish()]);
     let slice = buf.slice(..);
@@ -83,7 +114,9 @@ fn profile() -> Profile {
 
 #[test]
 fn constant_image_stays_constant_in_every_upscaler() {
-    let Some((dev, q)) = device() else { return eprintln!("no GPU adapter; skipping") };
+    let Some((dev, q)) = device() else {
+        return eprintln!("no GPU adapter; skipping");
+    };
     for kind in UpscalerKind::ALL {
         for sharp in [0.0, 0.8] {
             let mut p = profile();
@@ -99,7 +132,12 @@ fn constant_image_stays_constant_in_every_upscaler() {
             let (w, h, px) = read(&dev, &q, &outs[0]);
             assert_eq!((w, h), (64, 48));
             for v in px.chunks(3) {
-                assert!((v[0] - 0.25).abs() < 0.01 && (v[1] - 0.5).abs() < 0.01 && (v[2] - 0.75).abs() < 0.01, "{kind:?} sharp={sharp}: {v:?}");
+                assert!(
+                    (v[0] - 0.25).abs() < 0.01
+                        && (v[1] - 0.5).abs() < 0.01
+                        && (v[2] - 0.75).abs() < 0.01,
+                    "{kind:?} sharp={sharp}: {v:?}"
+                );
             }
         }
     }
@@ -107,7 +145,9 @@ fn constant_image_stays_constant_in_every_upscaler() {
 
 #[test]
 fn bilinear_matches_hand_computed_values() {
-    let Some((dev, q)) = device() else { return eprintln!("no GPU adapter; skipping") };
+    let Some((dev, q)) = device() else {
+        return eprintln!("no GPU adapter; skipping");
+    };
     let mut p = profile();
     p.upscale.kind = UpscalerKind::Bilinear;
     p.upscale.scale = 2.0;
@@ -162,18 +202,31 @@ fn run_pan(kind: FrameGenKind, stage: FrameGenStage, motion: (f32, f32)) -> f32 
     let mut pipe = Pipeline::new(dev.clone(), q.clone());
     pipe.configure(&p, (w, h));
     // Content moves by +motion each frame: frame_i(p) = pattern(p - i*motion).
-    let f0 = upload(&dev, &q, w, h, |x, y| pattern(x as f32 - 0.0, y as f32 - 0.0));
-    let f1 = upload(&dev, &q, w, h, |x, y| pattern(x as f32 - motion.0, y as f32 - motion.1));
+    let f0 = upload(&dev, &q, w, h, |x, y| {
+        pattern(x as f32 - 0.0, y as f32 - 0.0)
+    });
+    let f1 = upload(&dev, &q, w, h, |x, y| {
+        pattern(x as f32 - motion.0, y as f32 - motion.1)
+    });
     assert_eq!(pipe.process(&f0).len(), 1, "first frame has no history");
     let outs = pipe.process(&f1);
     assert_eq!(outs.len(), 2);
     let (_, _, got) = read(&dev, &q, &outs[0]);
     // Ground truth mid-frame: content displaced by half the motion.
-    let (_, _, want) = read(&dev, &q, &upload(&dev, &q, w, h, |x, y| pattern(x as f32 - motion.0 / 2.0, y as f32 - motion.1 / 2.0)));
+    let (_, _, want) = read(
+        &dev,
+        &q,
+        &upload(&dev, &q, w, h, |x, y| {
+            pattern(x as f32 - motion.0 / 2.0, y as f32 - motion.1 / 2.0)
+        }),
+    );
     // The last output must be the real frame.
     let (_, _, real) = read(&dev, &q, &outs[1]);
     let (_, _, real_want) = read(&dev, &q, &f1);
-    assert!(mse(&real, &real_want, w, h, 0) < 1e-4, "last output isn't the real frame");
+    assert!(
+        mse(&real, &real_want, w, h, 0) < 1e-4,
+        "last output isn't the real frame"
+    );
     mse(&got, &want, w, h, 12)
 }
 
@@ -182,19 +235,41 @@ fn optical_flow_beats_blend_on_a_pan() {
     if device().is_none() {
         return eprintln!("no GPU adapter; skipping");
     }
-    for motion in [(6.0, 0.0), (4.0, 2.0), (-8.0, 4.0), (5.0, 3.0), (-7.0, -1.0)] {
+    for motion in [
+        (6.0, 0.0),
+        (4.0, 2.0),
+        (-8.0, 4.0),
+        (5.0, 3.0),
+        (-7.0, -1.0),
+    ] {
         let blend = run_pan(FrameGenKind::Blend, FrameGenStage::BeforeUpscale, motion);
-        let flow = run_pan(FrameGenKind::OpticalFlow, FrameGenStage::BeforeUpscale, motion);
-        let flow_after = run_pan(FrameGenKind::OpticalFlow, FrameGenStage::AfterUpscale, motion);
+        let flow = run_pan(
+            FrameGenKind::OpticalFlow,
+            FrameGenStage::BeforeUpscale,
+            motion,
+        );
+        let flow_after = run_pan(
+            FrameGenKind::OpticalFlow,
+            FrameGenStage::AfterUpscale,
+            motion,
+        );
         eprintln!("motion {motion:?}: blend mse {blend:.5}  flow mse {flow:.5}  flow(after) mse {flow_after:.5}");
-        assert!(flow < blend * 0.25, "flow {flow} not clearly better than blend {blend} for {motion:?}");
-        assert!(flow_after < blend * 0.25, "after-stage flow {flow_after} vs blend {blend}");
+        assert!(
+            flow < blend * 0.25,
+            "flow {flow} not clearly better than blend {blend} for {motion:?}"
+        );
+        assert!(
+            flow_after < blend * 0.25,
+            "after-stage flow {flow_after} vs blend {blend}"
+        );
     }
 }
 
 #[test]
 fn multiplier_controls_output_count_and_sizes() {
-    let Some((dev, q)) = device() else { return eprintln!("no GPU adapter; skipping") };
+    let Some((dev, q)) = device() else {
+        return eprintln!("no GPU adapter; skipping");
+    };
     let mut p = profile();
     p.upscale.scale = 1.5;
     p.upscale.sharpness = 0.5;
@@ -214,7 +289,11 @@ fn f16(bits: u16) -> f32 {
     let s = if bits >> 15 == 1 { -1.0 } else { 1.0 };
     let e = ((bits >> 10) & 0x1f) as i32;
     let m = (bits & 0x3ff) as f32;
-    if e == 0 { s * m * 2f32.powi(-24) } else { s * (1.0 + m / 1024.0) * 2f32.powi(e - 15) }
+    if e == 0 {
+        s * m * 2f32.powi(-24)
+    } else {
+        s * (1.0 + m / 1024.0) * 2f32.powi(e - 15)
+    }
 }
 
 #[test]
@@ -229,15 +308,37 @@ fn debug_flow_vectors() {
     pipe.configure(&p, (w, h));
     let m = (5.0, 3.0);
     let f0 = upload(&dev, &q, w, h, |x, y| pattern(x as f32, y as f32));
-    let f1 = upload(&dev, &q, w, h, |x, y| pattern(x as f32 - m.0, y as f32 - m.1));
+    let f1 = upload(&dev, &q, w, h, |x, y| {
+        pattern(x as f32 - m.0, y as f32 - m.1)
+    });
     pipe.process(&f0);
     pipe.process(&f1);
     let t = pipe.flow_texture().unwrap();
     let (fw, fh) = (t.width(), t.height());
     let bpr = (fw * 8).next_multiple_of(256);
-    let buf = dev.create_buffer(&wgpu::BufferDescriptor { label: None, size: (bpr * fh) as u64, usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ, mapped_at_creation: false });
+    let buf = dev.create_buffer(&wgpu::BufferDescriptor {
+        label: None,
+        size: (bpr * fh) as u64,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
     let mut enc = dev.create_command_encoder(&Default::default());
-    enc.copy_texture_to_buffer(t.as_image_copy(), wgpu::TexelCopyBufferInfo { buffer: &buf, layout: wgpu::TexelCopyBufferLayout { offset: 0, bytes_per_row: Some(bpr), rows_per_image: Some(fh) } }, wgpu::Extent3d { width: fw, height: fh, depth_or_array_layers: 1 });
+    enc.copy_texture_to_buffer(
+        t.as_image_copy(),
+        wgpu::TexelCopyBufferInfo {
+            buffer: &buf,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(bpr),
+                rows_per_image: Some(fh),
+            },
+        },
+        wgpu::Extent3d {
+            width: fw,
+            height: fh,
+            depth_or_array_layers: 1,
+        },
+    );
     q.submit([enc.finish()]);
     buf.slice(..).map_async(wgpu::MapMode::Read, |r| r.unwrap());
     dev.poll(wgpu::PollType::wait_indefinitely()).unwrap();

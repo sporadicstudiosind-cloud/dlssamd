@@ -350,7 +350,10 @@ mod tests {
 
     #[test]
     fn partial_file_uses_defaults_and_sanitizes() {
-        let s = Settings::from_toml("[[profiles]]\nname='x'\n[profiles.framegen]\nmultiplier=99\nblock_size=7\n").unwrap();
+        let s = Settings::from_toml(
+            "[[profiles]]\nname='x'\n[profiles.framegen]\nmultiplier=99\nblock_size=7\n",
+        )
+        .unwrap();
         assert_eq!(s.profiles[0].framegen.multiplier, 8);
         assert_eq!(s.profiles[0].framegen.block_size, 8);
         assert_eq!(s.profiles[0].upscale, UpscaleSettings::default());
@@ -370,7 +373,11 @@ mod tests {
     #[test]
     fn exe_match_is_case_insensitive() {
         let mut s = Settings::default();
-        s.profiles.push(Profile { name: "g".into(), exe_match: "Game.EXE".into(), ..Default::default() });
+        s.profiles.push(Profile {
+            name: "g".into(),
+            exe_match: "Game.EXE".into(),
+            ..Default::default()
+        });
         assert_eq!(s.profile_for_exe("game.exe"), Some(1));
         assert_eq!(s.profile_for_exe("other.exe"), None);
     }
