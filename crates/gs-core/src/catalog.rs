@@ -96,7 +96,8 @@ pub const BACKENDS: &[Backend] = &[
     b!("amd.fsr_fg", "FSR Frame Generation / Redstone ML FG", "AMD", FrameGen, Injection, NeedsUserFiles, GpuReq::AnyFasterOn("RDNA 4"), "Needs game integration. Reportedly officially RDNA 4 only."),
     b!("amd.afmf", "AMD Fluid Motion Frames (driver)", "AMD", FrameGen, External, ExternalToggle, GpuReq::Amd, "Driver-level frame gen. Toggle in Adrenalin; this app cannot control it."),
     b!("intel.xess", "XeSS", "Intel", Upscaler, Injection, NeedsUserFiles, GpuReq::AnyFasterOn("Intel Arc (XMX)"), "Needs game motion vectors; injection lane."),
-    b!("nvidia.nis", "NVIDIA Image Scaling", "NVIDIA", Upscaler, Capture, Planned, GpuReq::Any, "Spatial; MIT-licensed shader could be ported."),
+    b!("nvidia.nis", "NVIDIA Image Scaling (NIS)", "NVIDIA", Upscaler, Capture, Builtin, GpuReq::Any, "Port of NVIDIA Image Scaling (MIT). Directional scaler with adaptive sharpening built in (the sharpness slider drives it). Limited to 2x upscaling. Runs on any GPU."),
+    b!("nvidia.smooth_motion", "NVIDIA Smooth Motion (driver)", "NVIDIA", FrameGen, External, ExternalToggle, GpuReq::NvidiaRtx, "The real thing: closed-source driver feature in the NVIDIA app (RTX 40/50). Not available on AMD. This app ships its own clean-room equivalent as the \"Smooth Motion\" profile."),
     b!("losslessscaling.lsfg", "Lossless Scaling (LSFG / LS1)", "Lossless Scaling", FrameGen, External, ExternalToggle, GpuReq::Any, "Proprietary separate app. Run it alongside if you own it; do not run both on the same window."),
     b!("magpie.shaders", "Magpie-style shader packs", "community", Upscaler, Capture, Planned, GpuReq::Any, "Custom WGSL/HLSL shader loading is a planned plugin."),
 ];
@@ -120,6 +121,7 @@ pub fn upscaler_for_id(id: &str) -> Option<crate::config::UpscalerKind> {
         "builtin.lanczos3" => Lanczos3,
         "builtin.edge_adaptive" => EdgeAdaptive,
         "amd.fsr1" => Fsr1,
+        "nvidia.nis" => Nis,
         _ => return None,
     })
 }

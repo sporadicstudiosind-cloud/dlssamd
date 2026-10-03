@@ -16,10 +16,12 @@ pub enum UpscalerKind {
     EdgeAdaptive,
     /// AMD FidelityFX Super Resolution 1 (EASU upscale + RCAS sharpen), MIT-licensed port.
     Fsr1,
+    /// NVIDIA Image Scaling (directional scaler + adaptive sharpen), MIT-licensed port. Max 2x.
+    Nis,
 }
 
 impl UpscalerKind {
-    pub const ALL: [UpscalerKind; 7] = [
+    pub const ALL: [UpscalerKind; 8] = [
         Self::Nearest,
         Self::Bilinear,
         Self::CatmullRom,
@@ -27,6 +29,7 @@ impl UpscalerKind {
         Self::Lanczos3,
         Self::EdgeAdaptive,
         Self::Fsr1,
+        Self::Nis,
     ];
     /// Value passed to the shader's `mode` uniform.
     pub fn shader_mode(self) -> u32 {
@@ -38,6 +41,7 @@ impl UpscalerKind {
             Self::Lanczos3 => 4,
             Self::EdgeAdaptive => 5,
             Self::Fsr1 => 6,
+            Self::Nis => 7,
         }
     }
     pub fn label(self) -> &'static str {
@@ -49,6 +53,7 @@ impl UpscalerKind {
             Self::Lanczos3 => "Lanczos 3",
             Self::EdgeAdaptive => "Edge-adaptive (built-in)",
             Self::Fsr1 => "AMD FSR 1 (EASU + RCAS)",
+            Self::Nis => "NVIDIA Image Scaling (max 2x)",
         }
     }
 }
@@ -230,10 +235,47 @@ impl Default for Profile {
 }
 
 impl Profile {
+    /// Name of the built-in one-switch preset.
+    pub const SMOOTH_MOTION_NAME: &'static str = "Smooth Motion";
+
+    /// A clean-room equivalent of the publicly documented behaviour of NVIDIA Smooth Motion:
+    /// fixed 2x frame generation from presented frames only (no engine data), optical-flow
+    /// based, no upscaling, and the lowest-latency presentation path. Nothing to configure.
+    ///
+    /// This is not NVIDIA's implementation (which is closed); image quality will differ.
+    pub fn smooth_motion() -> Self {
+        let mut p = Profile {
+            name: Self::SMOOTH_MOTION_NAME.into(),
+            framegen_backend: "builtin.optical_flow".into(),
+            ..Default::default()
+        };
+        p.upscale.enabled = false;
+        p.framegen.kind = FrameGenKind::OpticalFlow;
+        p.framegen.multiplier = 2;
+        p.framegen.stage = FrameGenStage::BeforeUpscale;
+        p.latency = LatencySettings {
+            present_mode: PresentMode::Mailbox,
+            max_frame_latency: 1,
+            capture_queue_depth: 1,
+            fps_cap: 0,
+            precise_pacing: true,
+            spin_us: 1500,
+            high_priority: true,
+        };
+        p
+    }
+
     /// Clamp everything into ranges the GPU code supports.
     pub fn sanitize(&mut self) {
         let u = &mut self.upscale;
-        u.scale = u.scale.clamp(1.0, 4.0);
+        u.scale = u.scale.clamp(
+            1.0,
+            if u.kind == UpscalerKind::Nis {
+                crate::nis::MAX_SCALE
+            } else {
+                4.0
+            },
+        );
         u.target_height = u.target_height.min(8640);
         u.sharpness = u.sharpness.clamp(0.0, 1.0);
         u.anti_ringing = u.anti_ringing.clamp(0.0, 1.0);
@@ -276,7 +318,13 @@ impl Profile {
                 (h as f32 * self.upscale.scale).round(),
             )
         };
-        ((ow as u32).clamp(1, 16384), (oh as u32).clamp(1, 16384))
+        let (mut ow, mut oh) = ((ow as u32).clamp(1, 16384), (oh as u32).clamp(1, 16384));
+        if self.upscale.kind == UpscalerKind::Nis {
+            // NIS can only upscale 1x..2x per axis.
+            ow = ow.clamp(w, w * 2);
+            oh = oh.clamp(h, h * 2);
+        }
+        (ow, oh)
     }
 }
 
@@ -311,6 +359,19 @@ impl Settings {
         for p in &mut self.profiles {
             p.sanitize();
         }
+    }
+
+    /// Index of the Smooth Motion preset, adding it if it isn't there yet.
+    pub fn ensure_smooth_motion(&mut self) -> usize {
+        if let Some(i) = self
+            .profiles
+            .iter()
+            .position(|p| p.name == Profile::SMOOTH_MOTION_NAME)
+        {
+            return i;
+        }
+        self.profiles.push(Profile::smooth_motion());
+        self.profiles.len() - 1
     }
 
     pub fn active_profile(&self) -> &Profile {
@@ -373,6 +434,43 @@ mod tests {
         assert_eq!(p.output_size((1280, 720)), (2560, 1440));
         p.upscale.enabled = false;
         assert_eq!(p.output_size((1280, 720)), (1280, 720));
+    }
+
+    #[test]
+    fn nis_output_is_capped_at_2x() {
+        let mut p = Profile::default();
+        p.upscale.kind = UpscalerKind::Nis;
+        p.upscale.target_height = 2160;
+        assert_eq!(p.output_size((1280, 720)), (2560, 1440));
+        p.upscale.target_height = 0;
+        p.upscale.scale = 3.0;
+        p.sanitize();
+        assert_eq!(p.upscale.scale, 2.0);
+    }
+
+    #[test]
+    fn smooth_motion_preset_is_fixed_2x_flow_with_lowest_latency() {
+        let mut p = Profile::smooth_motion();
+        let before = p.clone();
+        p.sanitize();
+        assert_eq!(p, before, "preset must already be valid");
+        assert!(!p.upscale.enabled);
+        assert_eq!(p.framegen.kind, FrameGenKind::OpticalFlow);
+        assert_eq!(p.framegen.multiplier, 2);
+        assert_eq!(
+            (p.latency.max_frame_latency, p.latency.capture_queue_depth),
+            (1, 1)
+        );
+        assert_eq!(p.output_size((1920, 1080)), (1920, 1080));
+    }
+
+    #[test]
+    fn ensure_smooth_motion_is_idempotent() {
+        let mut s = Settings::default();
+        let a = s.ensure_smooth_motion();
+        let b = s.ensure_smooth_motion();
+        assert_eq!(a, b);
+        assert_eq!(s.profiles.len(), 2);
     }
 
     #[test]

@@ -9,7 +9,7 @@ choosing the upscaler and frame generator. Rust + wgpu + egui. Windows first.
 2. **Upscales** it with a spatial kernel: nearest, bilinear, Catmull-Rom, Lanczos 2/3, a
    built-in edge-adaptive kernel, or **AMD FSR 1** (EASU + RCAS, a port of AMD's MIT-licensed
    shaders), plus contrast-adaptive sharpening.
-3. **Generates frames** (2x to 8x) with block-matching optical flow on a luma pyramid, or a
+3. **Generates frames** (2x to 8x; or one click on **Smooth Motion (2x)**, see below) with block-matching optical flow on a luma pyramid, or a
    plain-blend baseline. Regions you mark as HUD are excluded from warping, and blocks the
    matcher isn't confident about fade back to a blend.
 4. **Presents** in a click-through, always-on-top overlay, paced by the latency settings
@@ -17,9 +17,22 @@ choosing the upscaler and frame generator. Rust + wgpu + egui. Windows first.
 
 Profiles can be bound to an exe name and auto-apply when you capture that program.
 
+## Smooth Motion (2x)
+
+One button, nothing to configure: fixed 2x frame generation from the frames the app presents
+(no engine data), optical-flow based, no upscaling, and the lowest-latency presentation path.
+It mirrors the *publicly documented behaviour* of NVIDIA Smooth Motion (a driver feature that
+inserts one frame between every two rendered frames, with no per-game integration).
+
+It is **not** NVIDIA's implementation: that is closed source and RTX-only, and nothing was
+copied or decompiled. Their flow estimation is reportedly AI-based; this uses block matching,
+so image quality will differ. It also runs as a capture overlay, not in the driver, so it
+can't match a driver feature's integration or latency. For AMD's own driver-level equivalent,
+see AFMF in Adrenalin.
+
 ## What it cannot do (read this)
 
-- **DLSS, FSR 2/3/4, XeSS and vendor frame generation are not implemented.** They need the
+- **DLSS, FSR 2/3/4, XeSS and vendor frame generation are not implemented.** (FSR 1 and NIS are, because they're spatial and need no engine data.) They need the
   game's motion vectors and depth, which a screen capture doesn't have. They are in the
   catalog (Backends tab) with their real status. Supporting them means per-game DLL
   injection (the Optiscaler approach), which is a separate, fragile, single-player-only
@@ -67,7 +80,10 @@ works off Windows.
   (MIT, (c) 2021 Advanced Micro Devices, Inc.). The licence notice is kept in each file.
 - The other shaders (Lanczos/bicubic, edge-adaptive, CAS-style sharpen, optical flow,
   interpolation) are original implementations of published techniques.
-- NVIDIA Image Scaling is MIT-licensed and a port is planned, not done.
+- `nis_scaler.wgsl`, `nis.rs` and `nis_coefs.rs` are ports of NVIDIA Image Scaling SDK v1.0.3
+  (MIT, (c) 2022 NVIDIA CORPORATION & AFFILIATES). The coefficient tables were extracted from
+  `NIS_Config.h` by script, not retyped. SDR path only; the original's group-shared-memory
+  tiling, viewport, NV12 and HDR paths are not ported.
 - Not included, and not going to be: DLSS (proprietary, RTX-only), FSR 4 weights or leaked
   FSR 4 binaries (not open source), Lossless Scaling's LSFG (proprietary).
 - Being open source does not make something usable here: FSR 2/3 are MIT but need the game's

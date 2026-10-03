@@ -491,3 +491,149 @@ fn rcas_adds_local_contrast_and_stays_in_range() {
     );
     assert!(on.iter().all(|v| (0.0..=1.0).contains(v)));
 }
+
+#[test]
+fn nis_reproduces_a_linear_ramp() {
+    if device().is_none() {
+        return eprintln!("no GPU adapter; skipping");
+    }
+    let (w, h, px) = upscale_with(UpscalerKind::Nis, 0.0, 32, 16, 2.0, |x, _| {
+        [x as f32 / 31.0 * 0.8 + 0.1; 3]
+    });
+    let mut worst = 0.0f32;
+    for x in 8..w - 8 {
+        let src_x = (x as f32 + 0.5) / 2.0 - 0.5;
+        let want = 0.1 + 0.8 * src_x / 31.0;
+        worst = worst.max((px[((h / 2 * w + x) * 3) as usize] - want).abs());
+    }
+    assert!(worst < 0.02, "NIS ramp error {worst}");
+}
+
+#[test]
+fn nis_edges_are_sharper_than_bilinear_with_bounded_overshoot() {
+    if device().is_none() {
+        return eprintln!("no GPU adapter; skipping");
+    }
+    // NIS caps at 2x, so test at 2x.
+    let straight = |x: u32, _y: u32| -> [f32; 3] {
+        if x < 16 {
+            [0.2; 3]
+        } else {
+            [0.8; 3]
+        }
+    };
+    let diag = |x: u32, y: u32| -> [f32; 3] {
+        if x as i32 - y as i32 > 12 {
+            [0.8; 3]
+        } else {
+            [0.2; 3]
+        }
+    };
+    for (name, f, w0, h0) in [
+        (
+            "straight",
+            Box::new(straight) as Box<dyn Fn(u32, u32) -> [f32; 3]>,
+            32,
+            8,
+        ),
+        ("diagonal", Box::new(diag), 32, 24),
+    ] {
+        let (w, h, bil) = upscale_with(UpscalerKind::Bilinear, 0.0, w0, h0, 2.0, &f);
+        let (_, _, nis) = upscale_with(UpscalerKind::Nis, 0.5, w0, h0, 2.0, &f);
+        let row = (h / 2) as usize;
+        let (wb, wn) = (
+            rise_width(&bil, w, row, 0.2, 0.8),
+            rise_width(&nis, w, row, 0.2, 0.8),
+        );
+        eprintln!("NIS {name}: 10-90% rise bilinear {wb:.2} px, NIS {wn:.2} px");
+        assert!(
+            wn < wb,
+            "NIS {name} rise {wn} not sharper than bilinear {wb}"
+        );
+        let (lo, hi) = nis
+            .iter()
+            .fold((1.0f32, 0.0f32), |(l, h), &v| (l.min(v), h.max(v)));
+        assert!(
+            lo > 0.2 - 0.08 && hi < 0.8 + 0.08,
+            "NIS {name} overshoot: range {lo}..{hi}"
+        );
+    }
+}
+
+#[test]
+fn nis_sharpness_slider_steepens_edges() {
+    if device().is_none() {
+        return eprintln!("no GPU adapter; skipping");
+    }
+    let soft = |x: u32, _| {
+        let t = ((x as f32 - 14.0) / 4.0).clamp(0.0, 1.0);
+        [0.25 + 0.5 * t; 3]
+    };
+    let steep = |sharp: f32| {
+        let (w, h, px) = upscale_with(UpscalerKind::Nis, sharp, 32, 8, 1.5, soft);
+        let r = (h / 2 * w) as usize;
+        (1..w as usize)
+            .map(|x| (px[(r + x) * 3] - px[(r + x - 1) * 3]).abs())
+            .fold(0.0, f32::max)
+    };
+    let (lo, mid, hi) = (steep(0.0), steep(0.5), steep(1.0));
+    eprintln!("NIS max gradient at sharpness 0/0.5/1: {lo:.4} {mid:.4} {hi:.4}");
+    assert!(
+        lo < mid && mid < hi,
+        "slider not monotonic: {lo} {mid} {hi}"
+    );
+}
+
+#[test]
+fn nis_never_exceeds_2x() {
+    let Some((dev, q)) = device() else {
+        return eprintln!("no GPU adapter; skipping");
+    };
+    let mut p = profile();
+    p.upscale.kind = UpscalerKind::Nis;
+    p.upscale.scale = 3.0; // sanitize() must cap this
+    p.upscale.target_height = 0;
+    p.framegen.kind = FrameGenKind::Off;
+    let mut pipe = Pipeline::new(dev.clone(), q.clone());
+    pipe.configure(&p, (40, 30));
+    let outs = pipe.process(&upload(&dev, &q, 40, 30, |x, _| [x as f32 / 40.0; 3]));
+    assert_eq!((outs[0].width(), outs[0].height()), (80, 60));
+}
+
+#[test]
+fn smooth_motion_preset_doubles_frames_and_beats_blend() {
+    let Some((dev, q)) = device() else {
+        return eprintln!("no GPU adapter; skipping");
+    };
+    let (w, h) = (96u32, 64u32);
+    let mut p = Profile::smooth_motion();
+    p.framegen.sample_stride = 1;
+    let mut pipe = Pipeline::new(dev.clone(), q.clone());
+    pipe.configure(&p, (w, h));
+    let m = (5.0f32, 3.0f32);
+    let f0 = upload(&dev, &q, w, h, |x, y| pattern(x as f32, y as f32));
+    let f1 = upload(&dev, &q, w, h, |x, y| {
+        pattern(x as f32 - m.0, y as f32 - m.1)
+    });
+    assert_eq!(pipe.process(&f0).len(), 1);
+    let outs = pipe.process(&f1);
+    assert_eq!(outs.len(), 2, "exactly one generated frame per real frame");
+    assert_eq!((outs[0].width(), outs[0].height()), (w, h), "no upscaling");
+    let (_, _, got) = read(&dev, &q, &outs[0]);
+    let (_, _, want) = read(
+        &dev,
+        &q,
+        &upload(&dev, &q, w, h, |x, y| {
+            pattern(x as f32 - m.0 / 2.0, y as f32 - m.1 / 2.0)
+        }),
+    );
+    let blend = run_pan(
+        FrameGenKind::Blend,
+        FrameGenStage::BeforeUpscale,
+        (5.0, 3.0),
+    );
+    assert!(
+        mse(&got, &want, w, h, 12) < blend * 0.25,
+        "preset not clearly better than blending"
+    );
+}

@@ -10,8 +10,8 @@ mod windows_capture_source;
 /// window with no UI, then print what happened. Used to verify a build on a new machine.
 fn selftest(seconds: u64) -> i32 {
     use std::sync::{atomic::AtomicBool, Arc, Mutex};
-    let mut profile = gs_core::config::Profile::default();
-    profile.framegen.multiplier = 2;
+    // The one-click Smooth Motion preset, i.e. exactly what the UI button runs.
+    let profile = gs_core::config::Profile::smooth_motion();
     let stop = Arc::new(AtomicBool::new(false));
     let stats = Arc::new(Mutex::new(overlay::Stats::default()));
     let (s2, st2) = (stop.clone(), stats.clone());
